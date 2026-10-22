@@ -7,7 +7,7 @@ Standard library only, so nothing is downloaded at runtime.
 
 Profiles
   sections  Govee H60B0 Uplighter: whole lamp, Ripple / Side / Lower sections, 8 side segments, flow rate
-  segments  addressable lights using the 33 05 15 command family (H6088 cube sconces, H61E0 light strip):
+  segments  addressable lights using the 33 05 15 command family (H6088 cube sconces, H61E0 / H612D light strips):
             whole lamp plus one light per segment
 
 The lights cannot report per-section or per-segment state over LAN, so state is what the bridge last set
@@ -48,6 +48,7 @@ PROFILES = {
     "H60B0": {"family": "sections"},
     "H6088": {"family": "segments", "segments": 6},
     "H61E0": {"family": "segments", "segments": 15},
+    "H612D": {"family": "segments", "segments": 20},
 }
 
 
