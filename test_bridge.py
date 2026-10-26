@@ -39,6 +39,8 @@ FRAMES = {
     "H61E0 segs 1-4 red":          (B.f_seg_rgb(255, 0, 0, 0x000F, 2), "33 05 15 01 ff 00 00 00 00 00 00 00 0f 00"),
     "H61E0 seg 9 (2nd mask byte)": (B.f_seg_rgb(0, 0, 255, 1 << 8, 2), "33 05 15 01 00 00 ff 00 00 00 00 00 00 01"),
     "H61E0 segs 1-3 5%":           (B.f_seg_brightness(5, 0x0007, 2), "33 05 15 02 05 07 00 00"),
+    "H612D seg 17 (3rd mask byte)": (B.f_seg_rgb(255, 0, 0, 1 << 16, 3), "33 05 15 01 ff 00 00 00 00 00 00 00 00 00 01"),
+    "H612D segs 1-20 5%":          (B.f_seg_brightness(5, 0xFFFFF, 3), "33 05 15 02 05 ff ff 0f 00"),
 }
 for name, (got, want) in FRAMES.items():
     check(f"frame: {name}", hexf(got).startswith(want), f"got  {hexf(got)}\n      want {want}…")
@@ -169,6 +171,11 @@ sent = cmd(w, "segment_12", {"state": "ON", "color": {"r": 255, "g": 0, "b": 255
 check("H61E0 segment 12 uses the second mask byte", any(f.startswith("33 05 15 01 ff 00 ff 00 00 00 00 00 00 08") for f in sent), sent)
 w.lamp.cmds.clear()
 check("H61E0 whole-strip colour is one standard colorwc, no ptReal", cmd(w, "lamp", {"color": {"r": 1, "g": 2, "b": 3}}) == [] and w.lamp.cmds[-1][0] == "colorwc")
+
+x = dev_of(B.SegmentDevice, segments=B.PROFILES["H612D"]["segments"])
+check("H612D: 21 entities, 3-byte mask", len(x.entities()) == 21 and x.width == 3 and x.all == 0xFFFFF)
+sent = cmd(x, "segment_20", {"state": "ON", "color": {"r": 0, "g": 255, "b": 0}})
+check("H612D segment 20 uses the third mask byte", any(f.startswith("33 05 15 01 00 ff 00 00 00 00 00 00 00 00 08") for f in sent), sent)
 
 # ---------------------------------------------------------------- inventory / devices.toml
 tmp = tempfile.mkdtemp()

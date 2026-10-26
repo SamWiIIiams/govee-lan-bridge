@@ -18,6 +18,7 @@ so new lights show up on their own, and the bridge can keep running from that fi
 | **H60B0** Uplighter Floor Lamp | `sections` | whole lamp; Ripple, Side, Lower sections; 8 Side segments; flow rate |
 | **H6088** RGBIC Cube Wall Sconces | `segments` (6) | whole lamp; one light per cube |
 | **H61E0** LED Strip Light M1 | `segments` (15) | whole lamp; one light per segment |
+| **H612D** 49.2 ft RGBICW LED Strip Light | `segments` (20) | whole lamp; one light per segment |
 
 Other lights using the same command families can be added in the config file without code changes
 (see [Adding a light](#adding-a-light)).
@@ -31,7 +32,8 @@ device's suggested area in Home Assistant. Rename entities in Home Assistant as 
 On the H61E0 strip, segment 1 is the end nearest the power/data input and the numbers
 increase away from it. Segments 7–10 have blend zones between them, so they cover a longer run of the strip
 and colours there fade into each other; 1–6 and 11–15 are equal-length, directly adjacent blocks. On the H6088
-it's the opposite: cube 1 is the one farthest from the power input.
+it's the opposite: cube 1 is the one farthest from the power input. The H612D is two runs from one controller:
+segments 1–10 are one run and 11–20 the other, each numbered from the controller outward.
 
 ### H60B0 entities
 | Entity | Controls |
@@ -142,7 +144,7 @@ LAN `ptReal` message to UDP port 4003. Several frames can go in one message's `c
 | Power on/off | `33 01 01` / `33 01 00` |
 | Master brightness | `33 04 <1-100>` |
 
-**`segments` family (H6088, H61E0)**: the mask is 1 byte (≤8 segments) or 2 bytes, little-endian; bit n = segment n+1
+**`segments` family (H6088, H61E0, H612D)**: the mask is 1 byte per 8 segments (1–3 bytes), little-endian; bit n = segment n+1
 | Function | Frame data |
 |---|---|
 | Segment colour | `33 05 15 01 RR GG BB 00 00 00 00 00 <mask>` |
