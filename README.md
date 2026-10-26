@@ -114,11 +114,15 @@ enabled = true
 - **Scenes apply atomically.** Commands for a light arriving within 150 ms are merged into one change
   and sent in one packet, whatever order Home Assistant sends them in.
 - **Packet size.** The lights accepted 18 `ptReal` commands per packet in testing but dropped 24 **entirely**;
-  the bridge sends at most 12 per packet and splits larger changes 50 ms apart. Separate `ptReal` packets sent
-  back-to-back also get dropped, so they are always bundled. (Standard commands aren't affected.)
+  the bridge sends at most 12 per packet.
+- **Pacing.** Each command keeps a light busy for a moment, and a packet arriving while it is busy can be
+  silently dropped, whether it's a `ptReal` packet or a standard command right after one. In testing, 50 ms
+  spacing lost packets and 100 ms still lost one in about nine mixed sequences; 150 ms lost none. So the bridge
+  sends every command to a light in order and at least 150 ms apart, and bundles frames into as few packets
+  as possible.
 - **Segments (`segments` profile).** Whole-lamp power, brightness and colour use Govee's standard LAN
   commands (documented, reflected in the light's own status, and never dropped when sent back-to-back);
-  `ptReal` is used only for per-segment changes, sent right after any standard commands in the same change.
+  `ptReal` is used only for per-segment changes, sent after any standard commands in the same change.
   The whole-lamp light repaints every segment; segment lights control one each. A segment's "off" is **black**, which is a true off. Turning the last segment off switches the
   lamp off; turning one on while the lamp is off powers it on with the saved pattern.
 - **H60B0.** Two sections can be on at once: turning on a third switches off the one that's been on

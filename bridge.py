@@ -39,7 +39,7 @@ ROOT = "govee_lan"
 STATUS = f"{ROOT}/status"
 LAMP_PORT = 4003
 MIN_K, MAX_K = 2700, 6500          # outside this range the H60B0 blacks out; safe for all profiles
-MIN_GAP = 0.05                     # seconds between UDP datagrams to one light
+MIN_GAP = 0.15                     # seconds a light is busy per command; packets arriving sooner can be dropped
 MAX_FRAMES = int(os.environ.get("MAX_FRAMES_PER_PACKET", "12"))  # lights drop packets of ~24 frames
 BATCH_WINDOW = float(os.environ.get("BATCH_WINDOW", "0.15"))     # commands this close together form one change
 
@@ -148,7 +148,11 @@ def f_seg_brightness(p, mask, width):
 
 
 class Lamp:
-    """Sends frames as ptReal datagrams (several frames per datagram), spaced at least MIN_GAP apart."""
+    """Sends commands to one light in order, at least MIN_GAP apart.
+
+    Each command keeps the light busy for ~MIN_GAP, and a datagram arriving while it is busy can be silently
+    dropped: ptReal after ptReal, ptReal right after standard commands, and standard commands right after
+    a ptReal datagram were all seen to be lost. ptReal frames go several per datagram (see MAX_FRAMES)."""
 
     def __init__(self, ip):
         self.ip = ip
@@ -156,22 +160,23 @@ class Lamp:
         self.lock = threading.Lock()
         self.last = 0.0
 
-    def command(self, cmd, data):
-        """A standard (documented) LAN command. These are applied even when sent back-to-back."""
+    def _transmit(self, msg):
         with self.lock:
-            self.sock.sendto(json.dumps({"msg": {"cmd": cmd, "data": data}}).encode(), (self.ip, LAMP_PORT))
+            wait = self.last + MIN_GAP - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            self.sock.sendto(json.dumps(msg).encode(), (self.ip, LAMP_PORT))
+            self.last = time.monotonic()
+
+    def command(self, cmd, data):
+        """A standard (documented) LAN command."""
+        self._transmit({"msg": {"cmd": cmd, "data": data}})
         log(f"-> {self.ip}: {cmd} {json.dumps(data)}")
 
     def send(self, frames):
         for i in range(0, len(frames), MAX_FRAMES):
             chunk = frames[i:i + MAX_FRAMES]
-            msg = {"msg": {"cmd": "ptReal", "data": {"command": [base64.b64encode(f).decode() for f in chunk]}}}
-            with self.lock:
-                wait = self.last + MIN_GAP - time.monotonic()
-                if wait > 0:
-                    time.sleep(wait)
-                self.sock.sendto(json.dumps(msg).encode(), (self.ip, LAMP_PORT))
-                self.last = time.monotonic()
+            self._transmit({"msg": {"cmd": "ptReal", "data": {"command": [base64.b64encode(f).decode() for f in chunk]}}})
             log(f"-> {self.ip}: {' | '.join(f.hex(' ') for f in chunk)}")
 
 
@@ -480,7 +485,7 @@ class Device:
         for f in frames:                                  # drop repeated frames (e.g. power on)
             if f not in unique:
                 unique.append(f)
-        for cmd, data in self.commands:                   # standard commands first (verified safe before ptReal)
+        for cmd, data in self.commands:                   # standard commands first, then the ptReal (Lamp spaces them)
             self.lamp.command(cmd, data)
         self.lamp.send(unique)                            # then one datagram for all ptReal frames
         self.publish_states()

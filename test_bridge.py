@@ -237,5 +237,66 @@ check("H60B0 unique IDs follow <key>_<entity>", {"living_room_uplight_ripple", "
                                   "living_room_uplight_flow_rate", "living_room_uplight_side_segment_1"} <= uids)
 check("H60B0 discovery topics", any(t == "homeassistant/light/living_room_uplight/ripple/config" for t, _ in up.mqtt.pub))
 
+
+# ---------------------------------------------------------------- Lamp pacing (fake clock, no network)
+class FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, s):
+        self.now += s
+
+    def strftime(self, fmt):
+        return "T"
+
+
+class FakeSock:
+    def __init__(self, clock):
+        self.clock, self.out = clock, []
+
+    def sendto(self, b, addr):
+        self.out.append((round(self.clock.now - 1000.0, 3), json.loads(b)["msg"]["cmd"]))
+
+
+def paced(steps):
+    """Run steps ("cmd" | "pt" | "big" | idle seconds) on a real Lamp; return [(t, cmd)] as sent."""
+    real, B.time = B.time, FakeClock()
+    try:
+        lamp = B.Lamp("192.0.2.1")
+        lamp.sock.close()
+        lamp.sock = FakeSock(B.time)
+        for s in steps:
+            if s == "cmd":
+                lamp.command("brightness", {"value": 50})
+            elif s == "pt":
+                lamp.send([B.f_kelvin(3, 4000)])
+            elif s == "big":
+                lamp.send([B.f_kelvin(3, 4000)] * (B.MAX_FRAMES + 1))
+            else:
+                B.time.now += s
+        return lamp.sock.out
+    finally:
+        B.time = real
+
+
+check("pacing: MIN_GAP is 150 ms", B.MIN_GAP == 0.15)
+out = paced(["pt", "pt", "pt"])
+check("pacing: ptReal -> ptReal >= 150 ms", [t for t, _ in out] == [0.0, 0.15, 0.3], out)
+out = paced(["big"])
+check("pacing: a split change is sent 150 ms apart", [t for t, _ in out] == [0.0, 0.15], out)
+out = paced(["cmd", "pt"])
+check("pacing: standard command -> ptReal waits 150 ms", out == [(0.0, "brightness"), (0.15, "ptReal")], out)
+out = paced(["cmd", "cmd", "pt"])
+check("pacing: standard commands are spaced too",
+      out == [(0.0, "brightness"), (0.15, "brightness"), (0.3, "ptReal")], out)
+out = paced(["pt", "cmd", "pt"])
+check("pacing: a standard command after a ptReal waits its turn",
+      out == [(0.0, "ptReal"), (0.15, "brightness"), (0.3, "ptReal")], out)
+out = paced(["cmd", 5.0, "pt"])
+check("pacing: no wait once the light has been idle", out == [(0.0, "brightness"), (5.0, "ptReal")], out)
+
 print("\nALL TESTS PASSED" if not fails else f"\n{fails} FAILED")
 raise SystemExit(1 if fails else 0)
