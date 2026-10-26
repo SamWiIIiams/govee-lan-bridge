@@ -726,7 +726,9 @@ class SectionDevice(Device):
         s["state"] = "ON"
         if turning_on:
             frames += self.make_room(name, protect)
-            frames += self.power_on_frames() + [f_section(sec, True)]
+        # Always (re)send power and section on: the bridge only assumes the lamp's state, and "on" to
+        # a lit section is harmless, so a lamp changed elsewhere (app, power cut) gets back in step.
+        frames += self.power_on_frames() + [f_section(sec, True)]
         if name in self.on_order:
             self.on_order.remove(name)
         self.on_order.append(name)
@@ -780,7 +782,8 @@ class SectionDevice(Device):
             return self.section_frames("side", {"state": "OFF"}) if side["state"] == "ON" else []
         if side["state"] != "ON" or self.power["state"] != "ON":
             return self.section_frames("side", {"state": "ON"}, protect)
-        return self.side_segment_frames(sorted(seg_cmds))
+        # Side is believed lit; still resend power and section on in case the lamp was changed elsewhere
+        return self.power_on_frames() + [f_section(2, True)] + self.side_segment_frames(sorted(seg_cmds))
 
     def make_room(self, name, protect=()):
         """The lamp allows two sections at once: switch off the longest-on other section,

@@ -100,6 +100,13 @@ sent = cmd(d, "side", {"state": "OFF"})
 check("H60B0 section off is one frame", len(sent) == 1 and sent[0].startswith("33 30 02 00"), sent)
 sent = cmd(d, "flow", b"75")
 check("H60B0 flow rate", sent[0].startswith("33 05 2c 01 03 4b"), sent)
+# The bridge only assumes the lamp's state: "on" must reach the lamp even when the bridge
+# already believes the section is lit (e.g. it was switched off from the app)
+sent = cmd(d, "lower", {"state": "ON", "color_temp": 3000})
+check("H60B0 section on is resent when already believed lit", any(f.startswith("33 30 03 01") for f in sent), sent)
+cmd(d, "side", {"state": "ON"})
+sent = cmd(d, "side_segment_2", {"state": "ON", "color": {"r": 0, "g": 0, "b": 255}})
+check("H60B0 side segment change resends side on", any(f.startswith("33 30 02 01") for f in sent), sent)
 
 ok = True
 for order in itertools.permutations([("ripple", {"state": "ON", "color": {"r": 9, "g": 9, "b": 9}}),
