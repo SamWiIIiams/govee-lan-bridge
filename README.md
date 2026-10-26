@@ -19,6 +19,7 @@ so new lights show up on their own, and the bridge can keep running from that fi
 | **H6088** RGBIC Cube Wall Sconces | `segments` (6) | whole lamp; one light per cube |
 | **H61E0** LED Strip Light M1 | `segments` (15) | whole lamp; one light per segment |
 | **H612D** 49.2 ft RGBICW LED Strip Light | `segments` (20) | whole lamp; one light per segment |
+| **H60A6** Ceiling Light Pro *(experimental, testers wanted)* | `segments` (13) + zones | whole lamp; main light; background ring; 12 ring segments |
 
 Other lights using the same command families can be added in the config file without code changes
 (see [Adding a light](#adding-a-light)).
@@ -44,6 +45,22 @@ segments 1–10 are one run and 11–20 the other, each numbered from the contro
 | `light.<key>_lower` | down light: on/off, brightness, 2700–6500 K |
 | `light.<key>_side_segment_1` … `_8` | each side segment |
 | `number.<key>_flow_rate` | rotation speed of the ripple lens, 0–100 (0 ≈ stopped) |
+
+### H60A6 entities (experimental)
+The Ceiling Light Pro's main light and background ring can be switched and coloured on their own. The
+commands come from the app-derived device data in
+[govee-ble-local](https://github.com/Brady-Woods/govee-ble-local) (verified there over Bluetooth); they
+haven't been confirmed over LAN yet, so if you have an H60A6, please try it and report what works in an
+[issue](https://github.com/SamWiIIiams/govee-lan-bridge/issues).
+
+| Entity | Controls |
+|---|---|
+| `light.<key>_lamp` | the whole light: power, brightness, colour |
+| `light.<key>_main` | the main light: on/off, brightness, RGB, 2700–6500 K |
+| `light.<key>_ring` | the background ring (all 12 segments): on/off, brightness, RGB, 2700–6500 K |
+| `light.<key>_segment_1` … `_12` | each ring segment |
+
+Early H60A6 firmware may only switch the two parts on and off, without separate colours.
 
 ## Requirements
 - Lights with **LAN Control** enabled in the Govee Home app

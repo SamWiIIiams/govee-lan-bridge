@@ -8,7 +8,8 @@ Standard library only, so nothing is downloaded at runtime.
 Profiles
   sections  Govee H60B0 Uplighter: whole lamp, Ripple / Side / Lower sections, 8 side segments, flow rate
   segments  addressable lights using the 33 05 15 command family (H6088 cube sconces, H61E0 / H612D light strips):
-            whole lamp plus one light per segment
+            whole lamp plus one light per segment; zoned ones (H60A6 Ceiling Light Pro, experimental) also
+            get a light per zone, switched on its own
 
 The lights cannot report per-section or per-segment state over LAN, so state is what the bridge last set
 (retained in MQTT so it survives restarts).
@@ -49,6 +50,10 @@ PROFILES = {
     "H6088": {"family": "segments", "segments": 6},
     "H61E0": {"family": "segments", "segments": 15},
     "H612D": {"family": "segments", "segments": 20},
+    # Ceiling Light Pro: a main light and a background ring, each switched on its own. Mapped from the
+    # app-derived device data in Brady-Woods/govee-ble-local (MIT); not yet verified over LAN.
+    "H60A6": {"family": "segments", "segments": 13, "kelvin": "tint",
+              "zones": [("main", "Main light", 0, [13]), ("ring", "Ring", 1, list(range(1, 13)))]},
 }
 
 
@@ -143,8 +148,18 @@ def f_seg_kelvin(k, mask, width):
     return frame(0x33, 0x05, 0x15, 0x01, 0, 0, 0, k >> 8, k & 0xFF, 0, 0, 0, *mask_bytes(mask, width))
 
 
+def f_seg_kelvin_tint(k, mask, width):
+    """Segment colour temperature as the H60A6 takes it: ff ff ff, the Kelvin value, then its tint colour."""
+    k = clamp_k(k)
+    return frame(0x33, 0x05, 0x15, 0x01, 0xFF, 0xFF, 0xFF, k >> 8, k & 0xFF, *kelvin_to_rgb(k),
+                 *mask_bytes(mask, width))
+
+
 def f_seg_brightness(p, mask, width):
     return frame(0x33, 0x05, 0x15, 0x02, p, *mask_bytes(mask, width))
+
+
+def f_zone(index, on):      return frame(0x33, 0x30, index, 1 if on else 0)   # zoned segment lights (H60A6)
 
 
 class Lamp:
@@ -507,7 +522,9 @@ class SegmentDevice(Device):
     """Lights using the 33 05 15 family: whole lamp + N segments; segment off = black.
 
     Whole-lamp power, brightness and colour use the standard LAN commands (documented, reported by the
-    light's own status, and never dropped when sent back-to-back); ptReal is only used for segments."""
+    light's own status, and never dropped when sent back-to-back); ptReal is only used for segments.
+    Zoned lights (H60A6) also get a light per zone: each zone is switched on its own (33 30 <index>) and
+    coloured through its segments."""
 
     def power(self, on):
         self.commands.append(("turn", {"value": 1 if on else 0}))
@@ -522,36 +539,56 @@ class SegmentDevice(Device):
         else:
             self.commands.append(("colorwc", {"color": dict(w["color"]), "colorTemInKelvin": 0}))
 
-    def __init__(self, key, name, ip, sku, mqtt, segments, room=""):
+    def __init__(self, key, name, ip, sku, mqtt, segments, room="", zones=(), kelvin="plain"):
         super().__init__(key, name, ip, sku, mqtt, room)
         self.n = int(segments)
         self.width = (self.n + 7) // 8
         self.all = (1 << self.n) - 1
+        self.seg_kelvin = f_seg_kelvin_tint if kelvin == "tint" else f_seg_kelvin
         self.whole = {"state": "OFF", "brightness": 255, "color_mode": "color_temp", "color_temp": 4000,
                       "color": {"r": 255, "g": 200, "b": 150}}
         self.segs = [{"on": True, "brightness": 255, "color_mode": "color_temp", "color_temp": 4000,
                       "color": {"r": 255, "g": 200, "b": 150}} for _ in range(self.n)]
+        self.zones = [{"key": zkey, "label": label, "index": index, "members": [m - 1 for m in members],
+                       "state": "ON", "brightness": 255, "color_mode": "color_temp", "color_temp": 4000,
+                       "color": {"r": 255, "g": 200, "b": 150}} for zkey, label, index, members in zones]
+        self.zone_of = {i: z for z in self.zones for i in z["members"]}
+        # A segment that makes up a whole zone has no light of its own: the zone's light covers it
+        self.seg_entities = [i for i in range(self.n) if i not in self.zone_of or len(self.zone_of[i]["members"]) > 1]
 
     def entities(self):
-        return ["lamp"] + [f"segment_{i + 1}" for i in range(self.n)]
+        return ["lamp"] + [z["key"] for z in self.zones] + [f"segment_{i + 1}" for i in self.seg_entities]
 
     def discover(self):
         self.publish_light("lamp", "Lamp", ["rgb", "color_temp"])
-        for i in range(self.n):
+        for z in self.zones:
+            self.publish_light(z["key"], z["label"], ["rgb", "color_temp"])
+        for i in self.seg_entities:
             self.publish_light(f"segment_{i + 1}", f"Segment {i + 1}", ["rgb", "color_temp"])
 
     def publish_states(self):
         on = self.whole["state"] == "ON"
         self.mqtt.publish(f"{self.base}/lamp/state", self.light_payload(self.whole, on), retain=True)
-        for i, seg in enumerate(self.segs):
-            out = self.light_payload(seg, on and seg["on"])
+        for z in self.zones:
+            out = self.light_payload(z, on and z["state"] == "ON")
+            out["zone_on"] = z["state"] == "ON"
+            self.mqtt.publish(f"{self.base}/{z['key']}/state", out, retain=True)
+        for i in self.seg_entities:
+            seg, zone = self.segs[i], self.zone_of.get(i)
+            out = self.light_payload(seg, on and seg["on"] and (zone is None or zone["state"] == "ON"))
             out["segment_on"] = seg["on"]
             self.mqtt.publish(f"{self.base}/segment_{i + 1}/state", out, retain=True)
+
+    def zone(self, entity):
+        return next((z for z in self.zones if z["key"] == entity), None)
 
     def restore(self, entity, payload):
         data = json.loads(payload)
         if entity == "lamp":
             self.whole.update(data)
+        elif (z := self.zone(entity)) is not None:
+            z.update({k: data[k] for k in ("brightness", "color_mode", "color", "color_temp") if k in data})
+            z["state"] = "ON" if data.get("zone_on", data.get("state") == "ON") else "OFF"
         elif entity.startswith("segment_"):
             i = int(entity.split("_")[1]) - 1
             if 0 <= i < self.n:
@@ -573,15 +610,55 @@ class SegmentDevice(Device):
             if seg["on"]:
                 p = pct(seg["brightness"])
                 levels[p] = levels.get(p, 0) | bit
-        frames = [f_seg_kelvin(k[1], m, self.width) if k[0] == "k" else f_seg_rgb(*k[1:], m, self.width)
+        frames = [self.seg_kelvin(k[1], m, self.width) if k[0] == "k" else f_seg_rgb(*k[1:], m, self.width)
                   for k, m in colours.items()]
         frames += [f_seg_brightness(p, m, self.width) for p, m in levels.items()]
+        return frames
+
+    def zone_frames(self):
+        """Every zone's remembered on/off: what the light brings back by itself isn't known."""
+        if self.zones and not any(z["state"] == "ON" for z in self.zones):
+            for z in self.zones:
+                z["state"] = "ON"
+        return [f_zone(z["index"], z["state"] == "ON") for z in self.zones]
+
+    def light_lamp(self):
+        """Power the lamp on (if it's off), with every zone as remembered."""
+        if self.whole["state"] == "ON":
+            return []
+        self.whole["state"] = "ON"
+        self.power(True)
+        self.master(pct(self.whole["brightness"]))
+        return self.zone_frames()
+
+    def zone_apply(self, z, cmd):
+        if cmd.get("state") == "OFF":
+            z["state"] = "OFF"
+            return [f_zone(z["index"], False)]
+        frames = self.light_lamp()
+        z["state"] = "ON"
+        frames.append(f_zone(z["index"], True))       # always: the zone's state is only assumed
+        members = [self.segs[i] for i in z["members"]]
+        colour_changed = self.apply_colour(z, cmd)
+        if not any(seg["on"] for seg in members):
+            for seg in members:
+                seg["on"] = True
+        if colour_changed or "brightness" in cmd:      # a zone's colour or brightness repaints its segments
+            for seg in members:
+                seg["on"] = True
+                if colour_changed:
+                    seg["color_mode"], seg["color"], seg["color_temp"] = (
+                        z["color_mode"], dict(z["color"]), z["color_temp"])
+                if "brightness" in cmd:
+                    seg["brightness"] = z["brightness"]
+            frames += self.segment_frames(z["members"])
         return frames
 
     def apply(self, pending):
         frames = []
         cmd = pending.get("lamp")
         seg_cmds = {int(e.split("_")[1]) - 1: c for e, c in pending.items() if e.startswith("segment_")}
+        zone_cmds = [(z, pending[z["key"]]) for z in self.zones if z["key"] in pending]
         if cmd is not None:
             if cmd.get("state") == "OFF":
                 self.whole["state"] = "OFF"
@@ -591,6 +668,7 @@ class SegmentDevice(Device):
             self.whole["state"] = "ON"
             if turning_on:
                 self.power(True)
+                frames += self.zone_frames()
             if "brightness" in cmd:
                 self.whole["brightness"] = int(cmd["brightness"])
                 self.master(pct(self.whole["brightness"]))
@@ -599,17 +677,25 @@ class SegmentDevice(Device):
             colour = {k: v for k, v in cmd.items() if k in ("color", "color_temp")}
             if colour:                                    # whole-lamp colour repaints every segment
                 self.apply_colour(self.whole, colour)
+                for part in self.segs + self.zones:
+                    part["color_mode"], part["color"], part["color_temp"] = (
+                        self.whole["color_mode"], dict(self.whole["color"]), self.whole["color_temp"])
                 for seg in self.segs:
                     seg["on"] = True
-                    seg["color_mode"], seg["color"], seg["color_temp"] = (
-                        self.whole["color_mode"], dict(self.whole["color"]), self.whole["color_temp"])
                 self.whole_colour()
-            elif turning_on and not seg_cmds:
+            elif turning_on and not seg_cmds and not zone_cmds:
                 if not any(seg["on"] for seg in self.segs):
                     for seg in self.segs:
                         seg["on"] = True
                 frames += self.segment_frames(range(self.n))   # restore the saved pattern
+        for z, c in zone_cmds:
+            frames += self.zone_apply(z, c)
         if seg_cmds:
+            for i, c in seg_cmds.items():               # lighting a segment lights its zone
+                zone = self.zone_of.get(i)
+                if zone is not None and 0 <= i < self.n and c.get("state") != "OFF":
+                    zone["state"] = "ON"
+                    frames.append(f_zone(zone["index"], True))
             for i, c in seg_cmds.items():
                 if not 0 <= i < self.n:
                     continue
@@ -623,9 +709,7 @@ class SegmentDevice(Device):
                 self.power(False)
                 return frames
             if self.whole["state"] != "ON":
-                self.whole["state"] = "ON"
-                self.power(True)
-                self.master(pct(self.whole["brightness"]))
+                frames += self.light_lamp()
                 frames += self.segment_frames(range(self.n))
             else:
                 frames += self.segment_frames(sorted(i for i in seg_cmds if 0 <= i < self.n))
@@ -837,7 +921,8 @@ def make_device(entry, mqtt):
     args = (key, entry.get("name") or key, entry["ip"], (entry.get("sku") or "").upper(), mqtt)
     if prof["family"] == "sections":
         return SectionDevice(*args, room=entry.get("room") or "")
-    return SegmentDevice(*args, segments=prof["segments"], room=entry.get("room") or "")
+    return SegmentDevice(*args, segments=prof["segments"], room=entry.get("room") or "",
+                         zones=prof.get("zones", ()), kelvin=prof.get("kelvin", "plain"))
 
 
 # ---------------------------------------------------------------- bridge

@@ -179,6 +179,33 @@ check("H61E0 segment 12 uses the second mask byte", any(f.startswith("33 05 15 0
 w.lamp.cmds.clear()
 check("H61E0 whole-strip colour is one standard colorwc, no ptReal", cmd(w, "lamp", {"color": {"r": 1, "g": 2, "b": 3}}) == [] and w.lamp.cmds[-1][0] == "colorwc")
 
+a6p = B.PROFILES["H60A6"]
+a6 = dev_of(B.SegmentDevice, segments=a6p["segments"], zones=a6p["zones"], kelvin=a6p["kelvin"])
+check("H60A6: lamp, main, ring and 12 ring segments (no light for the main light's one segment)",
+      a6.entities() == ["lamp", "main", "ring"] + [f"segment_{i}" for i in range(1, 13)], a6.entities())
+check("H60A6 segment colour temperature takes ff ff ff, Kelvin, then the tint",
+      hexf(B.f_seg_kelvin_tint(3000, 0x0FFF, 2)).startswith(
+          "33 05 15 01 ff ff ff 0b b8 " + " ".join(f"{c:02x}" for c in B.kelvin_to_rgb(3000)) + " ff 0f"))
+cmd(a6, "lamp", {"state": "ON"})
+sent = cmd(a6, "ring", {"state": "OFF"})
+check("H60A6 ring off is the zone switch alone", sent == [hexf(B.f_zone(1, False))], sent)
+sent = cmd(a6, "ring", {"state": "ON", "color": {"r": 0, "g": 0, "b": 255}})
+check("H60A6 ring on + colour: zone switch, then segments 1-12",
+      sent[0].startswith("33 30 01 01") and any(f.startswith("33 05 15 01 00 00 ff 00 00 00 00 00 ff 0f") for f in sent), sent)
+sent = cmd(a6, "main", {"state": "ON", "color_temp": 4000})
+check("H60A6 main colour temperature: zone 0 on, segment 13 in the tint form",
+      sent[0].startswith("33 30 00 01") and any(f.startswith("33 05 15 01 ff ff ff 0f a0") and f[36:41] == "00 10" for f in sent), sent)
+cmd(a6, "ring", {"state": "OFF"})
+sent = cmd(a6, "segment_3", {"state": "ON", "color": {"r": 255, "g": 0, "b": 0}})
+check("H60A6 lighting a ring segment switches the ring on", any(f.startswith("33 30 01 01") for f in sent)
+      and a6.zones[1]["state"] == "ON", sent)
+cmd(a6, "lamp", {"state": "OFF"})
+cmd(a6, "lamp", {"state": "ON"})
+sent = a6.lamp.sent[-1]
+check("H60A6 lamp on resends each zone's on/off", hexf(B.f_zone(0, True)) in sent and hexf(B.f_zone(1, True)) in sent, sent)
+check("segment lights without zones are unchanged", dev_of(B.SegmentDevice, segments=6).entities() ==
+      ["lamp"] + [f"segment_{i}" for i in range(1, 7)])
+
 x = dev_of(B.SegmentDevice, segments=B.PROFILES["H612D"]["segments"])
 check("H612D: 21 entities, 3-byte mask", len(x.entities()) == 21 and x.width == 3 and x.all == 0xFFFFF)
 sent = cmd(x, "segment_20", {"state": "ON", "color": {"r": 0, "g": 255, "b": 0}})
