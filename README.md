@@ -74,6 +74,7 @@ services:
 |---|---|---|
 | `MQTT_HOST` / `MQTT_PORT` | `127.0.0.1` / `1883` | Broker |
 | `MQTT_USER` / `MQTT_PASS` | *(none)* | Broker credentials, if required |
+| `MQTT_PASS_FILE` | *(none)* | File holding the password instead of `MQTT_PASS` (e.g. `/run/secrets/mqtt_pass`) |
 | `GOVEE2MQTT_URL` | `http://127.0.0.1:8056` | govee2mqtt web UI (device list at `/api/devices`) |
 | `CONFIG_PATH` | `/config/devices.toml` | Config file |
 | `DISCOVERY_INTERVAL` | `600` | Seconds between govee2mqtt refreshes |
