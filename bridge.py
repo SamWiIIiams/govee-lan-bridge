@@ -30,6 +30,9 @@ MQTT_HOST = os.environ.get("MQTT_HOST", "127.0.0.1")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 MQTT_USER = os.environ.get("MQTT_USER") or None
 MQTT_PASS = os.environ.get("MQTT_PASS") or None
+if not MQTT_PASS and os.environ.get("MQTT_PASS_FILE"):            # e.g. a Docker secret
+    with open(os.environ["MQTT_PASS_FILE"], encoding="utf-8") as f:
+        MQTT_PASS = f.read().strip() or None
 DISCOVERY = os.environ.get("DISCOVERY_PREFIX", "homeassistant")
 GOVEE2MQTT_URL = os.environ.get("GOVEE2MQTT_URL", "http://127.0.0.1:8056").rstrip("/")
 CONFIG_PATH = os.environ.get("CONFIG_PATH", "/config/devices.toml")
@@ -219,8 +222,10 @@ class MQTT:
                 payload += _str(MQTT_PASS)
         self._send(0x10, _str("MQTT") + bytes([4, flags]) + struct.pack("!H", 60) + payload)
         ptype, body = self._read()
-        if ptype != 0x20 or body[1] != 0:
-            raise ConnectionError(f"MQTT connect refused (code {body[1] if len(body) > 1 else '?'})")
+        if ptype != 0x20 or len(body) < 2 or body[1] != 0:
+            code = body[1] if len(body) > 1 else "?"
+            reason = {4: "bad username or password", 5: "not authorized"}.get(code, f"code {code}")
+            raise ConnectionError(f"MQTT connect refused ({reason})")
         self.sock.settimeout(None)
 
     def subscribe(self, topic):

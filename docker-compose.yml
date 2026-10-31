@@ -10,5 +10,7 @@ services:
     environment:
       MQTT_HOST: 127.0.0.1                  # the broker Home Assistant uses
       GOVEE2MQTT_URL: http://127.0.0.1:8056 # govee2mqtt's web UI; lights are discovered from it
-      # MQTT_USER: ""                       # if your broker requires authentication
-      # MQTT_PASS: ""
+      # Broker credentials, if it requires authentication. Set MQTT_USER / MQTT_PASS in a .env file next
+      # to this one (Portainer: the stack's "Environment variables" section); leave unset for no auth.
+      MQTT_USER: ${MQTT_USER:-}
+      MQTT_PASS: ${MQTT_PASS:-}
